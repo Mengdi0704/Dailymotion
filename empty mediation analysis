@@ -1,0 +1,83 @@
+SELECT b.*, 
+CPM, 
+STR,
+no_buyer_inventories*STR*CPM/1000 as simulated_revenue
+FROM
+(
+SELECT
+  a.*,
+  region
+  FROM
+     (SELECT
+        date,
+        visitor_country,
+        owner_name,
+        owner_id,
+        domain,
+        platform_type,
+        COUNT(DISTINCT CASE WHEN buyer is null THEN inventory else null end) as no_buyer_inventories,
+        COUNT(DISTINCT inventory) as inventories
+      FROM
+          (SELECT
+              log.context.inventory,
+              DATE(timestamp) as date,
+              log.reader.country AS visitor_country,
+              NET.REG_DOMAIN(log.context.embedder) AS domain,
+              log.owner.name AS owner_name,
+              log.owner.id AS owner_id,
+              log.reader.platform as platform_type,
+              MAX(log.context.buyertype) as buyer 
+           FROM `dmxleo-rawlogs-prod.addirector.logs` 
+           WHERE DATE(partition_name) between "2020-10-01" and "2020-10-31"
+             and log.event = 'call'
+             and log.context.noad.code is null
+             and log.context.inventory is not null and log.context.inventory != ''
+           GROUP BY 
+             inventory,
+             date,
+             visitor_country,
+             domain,
+             owner_name,
+             owner_id,
+             platform_type
+           )
+       GROUP BY
+           date,
+           visitor_country,
+           owner_name,
+           owner_id,
+           domain,
+           platform_type
+       ) as a
+LEFT JOIN 
+(SELECT
+ country_code,
+ mapping_sales_macro as region
+ FROM `dailymotion-bidata.reference_tables.finance_countries_mappings`
+) as regions
+ON a.visitor_country = regions.country_code
+) as b
+LEFT JOIN 
+(
+#For simulations: compute STR and CPM at the domain x owner x country level
+#We could also add some levels
+WITH vars AS (SELECT date("2020-10-01") as start_date, date("2020-10-31") as end_date)
+SELECT 
+  NET.REG_DOMAIN(visitor.domain) as domain,
+  video.owner.id as owner_id,
+  visitor.country,
+  visitor.device_type,
+  SAFE_DIVIDE(COUNT(DISTINCT CASE WHEN inventory.outcome = 'impression' then inventory.id else null end), COUNT(DISTINCT CASE WHEN inventory.outcome != 'noad' then inventory.id else null end)) as STR,
+  1000*SAFE_DIVIDE(SUM(revenue.gross_adjusted), COUNT(DISTINCT CASE WHEN inventory.outcome = 'impression' then inventory.id else null end)) as CPM
+FROM `dailymotion-bidata.inventory.agnostic_enriched` 
+WHERE DATE(_PARTITIONTIME) BETWEEN (SELECT start_date from vars) AND (SELECT end_date from vars)
+GROUP BY
+  domain,
+  owner_id,
+  country,
+  device_type
+  ) AS simulation
+ON b.visitor_country = simulation.Country
+and b.domain = simulation.domain
+and b.owner_id =simulation.owner_id
+and b.platform_type = simulation.device_type
