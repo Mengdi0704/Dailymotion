@@ -15,6 +15,8 @@ SELECT
         owner_id,
         domain,
         platform_type,
+        upload_category,
+        IAB_category,
         COUNT(DISTINCT CASE WHEN buyer is null THEN inventory else null end) as no_buyer_inventories,
         COUNT(DISTINCT inventory) as inventories
       FROM
@@ -26,6 +28,8 @@ SELECT
               log.owner.name AS owner_name,
               log.owner.id AS owner_id,
               log.reader.platform as platform_type,
+              log.content.channel as upload_category,
+              MAX(log.content.iabcat) as IAB_category,
               MAX(log.context.buyertype) as buyer 
            FROM `dmxleo-rawlogs-prod.addirector.logs` 
            WHERE DATE(partition_name) between "2020-10-01" and "2020-10-31"
@@ -39,7 +43,8 @@ SELECT
              domain,
              owner_name,
              owner_id,
-             platform_type
+             platform_type,
+             upload_category
            )
        GROUP BY
            date,
@@ -47,7 +52,9 @@ SELECT
            owner_name,
            owner_id,
            domain,
-           platform_type
+           platform_type,
+           upload_category,
+           IAB_category
        ) as a
 LEFT JOIN 
 (SELECT
@@ -59,7 +66,7 @@ ON a.visitor_country = regions.country_code
 ) as b
 LEFT JOIN 
 (
-#For simulations: compute STR and CPM at the domain x owner x country level
+#For simulations: compute STR and CPM at the domain x owner x country x device level
 #We could also add some levels
 WITH vars AS (SELECT date("2020-10-01") as start_date, date("2020-10-31") as end_date)
 SELECT 
